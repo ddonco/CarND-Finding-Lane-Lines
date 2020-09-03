@@ -1,56 +1,101 @@
 # **Finding Lane Lines on the Road** 
-[![Udacity - Self-Driving Car NanoDegree](https://s3.amazonaws.com/udacity-sdc/github/shield-carnd.svg)](http://www.udacity.com/drive)
 
-<img src="examples/laneLines_thirdPass.jpg" width="480" alt="Combined Image" />
+### **Overview**
+When considering an autonomous car, there are a few basic functions it must demonstrate. It has to have the ability to control throttle and brake, control steering angle, and perceive the world around it to drive safely and obey traffic laws. This project is an introductory step into environmental perception using a forward facing camera and traditional computer vision techniques to find lane lines. Automating the process of finding lane lines and labeling them can be accomplished, to a moderate to high level of accuracy, using traditional computer vision because of the general uniformity of lane lines on a road. Of course variable lighting, weather, debris, and worn paint will all contribute to making lane lines less uniform, but for the purposes of this introductory project we will focus on well lite, easily identifiable lane line images. The objective of this project is to develop a lane line detection and labeling pipeline that can be applied to images or video.
 
-Overview
----
+[//]: # (Image References)
+[input]: ./examples/input.png "Input Image"
+[gray]: ./examples/gray.png "Grayscale"
+[blur]: ./examples/blur.png "Gaussian Blur"
+[canny]: ./examples/canny.png "Canny Edge Detection"
+[region]: ./examples/region.png "Region Of Interest"
+[hough]: ./examples/hough.png "Hough Lines"
+[output]: ./examples/output.png "Output Image"
 
-When we drive, we use our eyes to decide where to go.  The lines on the road that show us where the lanes are act as our constant reference for where to steer the vehicle.  Naturally, one of the first things we would like to do in developing a self-driving car is to automatically detect lane lines using an algorithm.
+### **Pipeline**
+The lane line detection and labeling pipeline can be broken into 6 steps, each performing an important step to produce the final labeled image or video. Lets consider the below image as an example input to the pipeline.
+![alt text][input]
 
-In this project you will detect lane lines in images using Python and OpenCV.  OpenCV means "Open-Source Computer Vision", which is a package that has many useful tools for analyzing images.  
+First step of the pipeline is to convert the raw input image to gray scale to form the basis for further image processing. 
+![alt text][gray]
 
-To complete the project, two files will be submitted: a file containing project code and a file containing a brief write up explaining your solution. We have included template files to be used both for the [code](https://github.com/udacity/CarND-LaneLines-P1/blob/master/P1.ipynb) and the [writeup](https://github.com/udacity/CarND-LaneLines-P1/blob/master/writeup_template.md).The code file is called P1.ipynb and the writeup template is writeup_template.md 
+Next, a Gaussian blur is applied to reduce noise in the image and help edge detection functions ignore inconsequential objects. The OpenCV GaussianBlur function takes a kernel size parameter which is set to 5 pixels in this pipeline.
+![alt text][blur]
 
-To meet specifications in the project, take a look at the requirements in the [project rubric](https://review.udacity.com/#!/rubrics/322/view)
+The first edge detection function is applied to the image in the form of the Canny edge detection algorithm. The Canny function in OpenCV calculates gradients in pixel intensities and return a matrix of edges, regions of maximal gradient, that pass the low and high threshold criteria. The aforementioned low threshold and high threshold parameters accepted by the OpenCV Canny function have been set to 55 and 175 respectively.
+![alt text][canny]
+
+A region-of-interest filter is applied to the Canny edge detection output to focus the final lane detection and labeling functions to the region of the image that corresponds with the front of the car and the direction of travel. This region makes up a parallelogram that spans the entire base of the image and tapers like an equilateral triangle as you move up the image but cuts off just below the horizon.
+![alt text][region]
+
+Next, a Hough transform is applied to the Canny edge image to abstract out lines from the points in the Canny output. There are a handful of parameters in the HoughLinesP function from OpenCV which form the definition of what we will consider a line and what we will ignore. For example the min_line_length and max_line_gap are fairly straight forward parameters that specify the minimum length a series of points must be to be considered a line and the maximum gap between consecutive series of points to be considered a line. The OpenCV HoughLinesP parameters have been set as follows: rho of 1, theta of Pi/180, threshold of 10, min line length of 20, and max line gap of 20.
+
+The resulting Hough lines are often small line segments which then must be extended to form a continuous lane line that could then be fed to a car steering angle algorithm. The `draw_lines` function takes the Hough lines as an input to filter the line segments and fit them into left and right lane lines. For each line in the set of lines, a slope is calculated to separate left lane lines from right lane lines, and filter out line segments that don't contribute to either line. Line segments with a slope greater than 0.45 are considered left lane lines while lines with slope less then -0.45 are considered right lane lines. Line segments with a slope between -0.45 and 0.45 are ignored all together to avoid including horizontal lines in our lane line calculation. Next, one line is fit to the `(x, y)` points of the left line segments and another line is fit to the points of the right line segments. These best fit lines are assumed to be the overall left and right lane lines that were detected by the Hough lines function. The best fit lines are then drawn on the image that was fed as an input to the `draw_lines` function. The implementation of the `draw_lines` function is shown below.
+```
+def draw_lines(img, lines, color=[255, 0, 0], thickness=2):
+    right_x = []
+    right_y = []
+    left_x = []
+    left_y = []
+    
+    for line in lines:
+        for x1,y1,x2,y2 in line:
+            slope = float((y2 - y1) / (x2 - x1))
+            if slope > 0.45:
+                left_x.extend([x1, x2])
+                left_y.extend([y1, y2])
+                
+            if slope < -0.45:
+                right_x.extend([x1, x2])
+                right_y.extend([y1, y2])
+                            
+    if len(right_x) > 0 and len(left_x) > 0 and len(right_y) > 0 and len(left_y) > 0:
+        right_line_coeffs = np.polyfit(right_x, right_y, 1)
+        left_line_coeffs = np.polyfit(left_x, left_y, 1)
+        
+        cv2.line(img, 
+                 (int((320 - right_line_coeffs[1]) / right_line_coeffs[0]), 320), 
+                 (int((540 - right_line_coeffs[1]) / right_line_coeffs[0]), 540), 
+                 color, 
+                 thickness)
+        cv2.line(img, 
+                 (int((320 - left_line_coeffs[1]) / left_line_coeffs[0]), 320), 
+                 (int((540 - left_line_coeffs[1]) / left_line_coeffs[0]), 540), 
+                 color, 
+                 thickness)
+```
+![alt text][hough]
+
+Finally, the Hough lines are superimposed on the input image to show us where the lane line detection pipeline has found lanes. Visualizing the output of the pipeline also help us troubleshoot issues that may occur when the car encounters variable conditions.
+![alt text][output]
+
+### **Potential Shortcomings In This Pipeline**
+1. The first potential shortcoming that comes to mind originates from the hard coded slope filtering in the `draw_lines` function. Its possible that Hough lines with slopes less then 0.45 and greater than -0.45 will correctly contribute to the overall lane line slope when the car is traveling around tight corners. I would expect this pipeline to break down if fed images of the car traveling around tight corners because accurate Hough lines will be ignored and the resulting lane lines will appear more vertical than they should be.
+
+2. Another potential shortcoming of this pipeline is the limited color analysis performed to identify lane lines. More specifically, shadows cast across the road, or low lighting, will reduce the contrast between the paint and the road causing the Canny edge detection to miss sections of lane lines. Additionally, edges of shadows may demonstrate strong gradients and will be captured by Canny edge detection leading to incorrect line segments used to generate the overall lane lines.
 
 
-Creating a Great Writeup
----
-For this project, a great writeup should provide a detailed response to the "Reflection" section of the [project rubric](https://review.udacity.com/#!/rubrics/322/view). There are three parts to the reflection:
+### **Possible Improvements To This Pipeline**
+1. A potential improvement to reduce error from the hard coded line slope filtering applied in `draw_lines` would be to use a dynamic approach to filtering out noisy Hough lines. A mean slope of all left and right line segments could be calculated and the standard deviation of the sample sets could be used to exclude outliers. Additionally, the resulting lane line generated by generating a best fit line of the left and right lane line segments could be smoothed across several image frames to reduce noise in the overall lane line.
 
-1. Describe the pipeline
+2. Another potential mitigation technique that could address the issues resulting from shadows and poor lighting would be to normalize the RGB channels. Normalizing the color channels improves distinction between different colors to then perform Canny edge detection, rather than just relying on pixel intensities.
 
-2. Identify any shortcomings
+### **Usage**
+There are two suggested methods for running the project notebook:
++ Docker
+  1. Install Docker, and if wanting to use GPU compute install `nvidia-docker`
+  2. Pull the precompiled image from Dockerhub: `docker pull udacity/carnd-term1-starter-kit`
+  3. Navigate into the project directory: `cd CarND-Finding-Lane-Lines`
+  4. Run the image as a new container: `docker run -it --rm --entrypoint "/run.sh" -p 8888:8888 -v `pwd`:/src udacity/carnd-term1-starter-kit`
+  5. Open a web browser and navigate to `localhost:8888`
+  6. Open the project jupyter notebook and enjoy!
 
-3. Suggest possible improvements
-
-We encourage using images in your writeup to demonstrate how your pipeline works.  
-
-All that said, please be concise!  We're not looking for you to write a book here: just a brief description.
-
-You're not required to use markdown for your writeup.  If you use another method please just submit a pdf of your writeup. Here is a link to a [writeup template file](https://github.com/udacity/CarND-LaneLines-P1/blob/master/writeup_template.md). 
-
-
-The Project
----
-
-## If you have already installed the [CarND Term1 Starter Kit](https://github.com/udacity/CarND-Term1-Starter-Kit/blob/master/README.md) you should be good to go!   If not, you should install the starter kit to get started on this project. ##
-
-**Step 1:** Set up the [CarND Term1 Starter Kit](https://github.com/udacity/CarND-Term1-Starter-Kit/blob/master/README.md) if you haven't already.
-
-**Step 2:** Open the code in a Jupyter Notebook
-
-You will complete the project code in a Jupyter notebook.  If you are unfamiliar with Jupyter Notebooks, check out [Udacity's free course on Anaconda and Jupyter Notebooks](https://classroom.udacity.com/courses/ud1111) to get started.
-
-Jupyter is an Ipython notebook where you can run blocks of code and see results interactively.  All the code for this project is contained in a Jupyter notebook. To start Jupyter in your browser, use terminal to navigate to your project directory and then run the following command at the terminal prompt (be sure you've activated your Python 3 carnd-term1 environment as described in the [CarND Term1 Starter Kit](https://github.com/udacity/CarND-Term1-Starter-Kit/blob/master/README.md) installation instructions!):
-
-`> jupyter notebook`
-
-A browser window will appear showing the contents of the current directory.  Click on the file called "P1.ipynb".  Another browser window will appear displaying the notebook.  Follow the instructions in the notebook to complete the project.  
-
-**Step 3:** Complete the project and submit both the Ipython notebook and the project writeup
-
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
-
++ Miniconda
+  1. Install `miniconda`
+  2. Clone the Udacity starter kit repo: `git clone https://github.com/udacity/CarND-Term1-Starter-Kit.git`
+  3. Navigate into the repo: `cd CarND-Term1-Starter-Kit`
+  4. Create the preconfigured environment containing the necessary dependencies: `conda env create -f environment.yml`
+    - If wanting to use GPU compute, create the GPU enabled environment: `conda env create -f environment-gpu.yml`
+  5. Activate the newly created environment: `source activate carnd-term1`
+  6. Run the jupyter notebook server: `jupyter notebook`
+  7. Open the project jupyter notebook and enjoy!
